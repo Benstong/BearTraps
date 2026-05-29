@@ -48,7 +48,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         
         registerRecipe();
         startDetectionTask();
-        getLogger().info("BearTraps (Опавшая листва) запущен!");
+        getLogger().info("BearTraps (3D Куча листьев + Защита) запущен!");
     }
 
     private void registerRecipe() {
@@ -72,138 +72,159 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         Player player = event.getPlayer();
         ItemStack handItem = event.getItem();
 
-        // 1. Установка закрытого капкана (ПКМ)
+        // Проверка: Кликнули ли по капкану?
+        ItemDisplay clickedTrap = null;
+        if (event.getClickedBlock() != null) {
+            Location checkLoc = event.getClickedBlock().getLocation().add(0.5, 1.0, 0.5);
+            for (Entity entity : checkLoc.getWorld().getNearbyEntities(checkLoc, 1.2, 1.2, 1.2)) {
+                if (entity instanceof ItemDisplay display && display.getPersistentDataContainer().has(trapIdKey, PersistentDataType.STRING)) {
+                    clickedTrap = display;
+                    break;
+                }
+            }
+        }
+
+        // Если кликнули по капкану
+        if (clickedTrap != null) {
+            String id = clickedTrap.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING);
+            ItemDisplay anchor = findAnchor(clickedTrap.getWorld(), id);
+            
+            if (anchor != null) {
+                String state = anchor.getPersistentDataContainer().get(trapStateKey, PersistentDataType.STRING);
+
+                if (event.getAction() == Action.RIGHT_CLICK_BLOCK) {
+                    
+                    // КРИТИЧЕСКАЯ ЗАЩИТА 1: Нельзя поставить второй капкан в этот же капкан
+                    if (handItem != null && handItem.getItemMeta() != null && handItem.getItemMeta().getPersistentDataContainer().has(trapKey, PersistentDataType.BYTE)) {
+                        event.setCancelled(true);
+                        player.sendMessage(ChatColor.RED + "Здесь уже установлен капкан!");
+                        return;
+                    }
+
+                    // КРИТИЧЕСКАЯ ЗАЩИТА 2: Нельзя вставить блок внутрь капкана
+                    if (handItem != null && handItem.getType().isBlock() && !handItem.getType().name().contains("LEAVES")) {
+                        event.setCancelled(true);
+                        return;
+                    }
+
+                    // А) СОЗДАНИЕ 3D КУЧИ ОПАВШИХ ЛИСТЬЕВ (Shift + ПКМ с листьями по взведенному капкану)
+                    if ("armed".equals(state) && player.isSneaking() && handItem != null && handItem.getType().name().contains("LEAVES")) {
+                        event.setCancelled(true);
+                        
+                        if (!anchor.getPersistentDataContainer().has(trapCamouflageKey, PersistentDataType.BYTE)) {
+                            anchor.getPersistentDataContainer().set(trapCamouflageKey, PersistentDataType.BYTE, (byte) 1);
+                            
+                            // Генерируем объемную кучку из 3-х перекрещенных сплющенных слоев листвы
+                            float[][] leafOffsets = {
+                                {0.0f, 0.04f, 0.0f, 15f, 0f, 1f, 0f},   // Центральный базовый слой
+                                {-0.05f, 0.06f, 0.02f, -20f, 1f, 0f, 0f}, // Сдвинутый слой под углом X
+                                {0.05f, 0.05f, -0.02f, 25f, 0f, 0f, 1f}   // Сдвинутый слой под углом Z
+                            };
+
+                            for (float[] offset : leafOffsets) {
+                                ItemDisplay camoPart = anchor.getWorld().spawn(anchor.getLocation(), ItemDisplay.class);
+                                camoPart.setItemStack(new ItemStack(handItem.getType()));
+                                camoPart.getPersistentDataContainer().set(trapIdKey, PersistentDataType.STRING, id);
+                                camoPart.getPersistentDataContainer().set(trapPartKey, PersistentDataType.STRING, "camouflage");
+                                
+                                // Формируем пышную, но не слишком высокую кучку
+                                camoPart.setTransformation(new Transformation(
+                                        new Vector3f(offset[0], offset[1], offset[2]),
+                                        new AxisAngle4f((float) Math.toRadians(offset[3]), offset[4], offset[5], offset[6]),
+                                        new Vector3f(0.85f, 0.25f, 0.85f), // Сплющенные по высоте, широкие блоки
+                                        new AxisAngle4f()
+                                ));
+                            }
+                            
+                            if (player.getGameMode() != GameMode.CREATIVE) {
+                                handItem.setAmount(handItem.getAmount() - 1);
+                            }
+                            
+                            player.playSound(anchor.getLocation(), Sound.BLOCK_CHERRY_LEAVES_PLACE, 1.0f, 0.8f);
+                            player.sendMessage(ChatColor.DARK_GREEN + "Вы набросали кучку листьев, люто замаскировав капкан!");
+                        }
+                        return;
+                    }
+
+                    // Б) ЗАРЯДКА ПРИМАНКИ (Shift + ПКМ с гнилой плотью)
+                    if ("armed".equals(state) && player.isSneaking() && handItem != null && handItem.getType() == Material.ROTTEN_FLESH) {
+                        event.setCancelled(true);
+                        
+                        if (!anchor.getPersistentDataContainer().has(trapBaitKey, PersistentDataType.BYTE)) {
+                            anchor.getPersistentDataContainer().set(trapBaitKey, PersistentDataType.BYTE, (byte) 1);
+                            
+                            ItemDisplay baitDisplay = anchor.getWorld().spawn(anchor.getLocation(), ItemDisplay.class);
+                            baitDisplay.setItemStack(new ItemStack(Material.ROTTEN_FLESH));
+                            baitDisplay.getPersistentDataContainer().set(trapIdKey, PersistentDataType.STRING, id);
+                            baitDisplay.getPersistentDataContainer().set(trapPartKey, PersistentDataType.STRING, "bait");
+                            baitDisplay.setTransformation(new Transformation(
+                                    new Vector3f(0f, 0.12f, 0f), // Чуть выше, чтобы виднелась из кучи
+                                    new AxisAngle4f(0, 0, 0, 1),
+                                    new Vector3f(0.4f, 0.4f, 0.4f),
+                                    new AxisAngle4f()
+                            ));
+                            
+                            if (player.getGameMode() != GameMode.CREATIVE) {
+                                handItem.setAmount(handItem.getAmount() - 1);
+                            }
+                            
+                            player.playSound(anchor.getLocation(), Sound.ENTITY_PLAYER_BURP, 0.6f, 0.8f);
+                            player.sendMessage(ChatColor.GOLD + "Приманка спрятана в капкане!");
+                        }
+                        return;
+                    }
+
+                    // В) ОБЫЧНЫЙ ВЗВОД (ПКМ пустой рукой)
+                    if (handItem == null && ("closed".equals(state) || "triggered".equals(state))) {
+                        event.setCancelled(true);
+                        playArmingAnimation(player, anchor);
+                        return;
+                    }
+                }
+
+                // ДЕМОНТАЖ (ЛКМ)
+                if (event.getAction() == Action.LEFT_CLICK_BLOCK) {
+                    event.setCancelled(true);
+                    removeTrapEntities(display.getWorld(), id);
+                    
+                    ItemStack trapItem = new ItemStack(Material.CHAIN);
+                    ItemMeta m = trapItem.getItemMeta();
+                    if (m != null) {
+                        m.setDisplayName(ChatColor.DARK_GRAY + "Медвежий капкан");
+                        m.getPersistentDataContainer().set(trapKey, PersistentDataType.BYTE, (byte) 1);
+                        trapItem.setItemMeta(m);
+                    }
+                    player.getInventory().addItem(trapItem);
+                    
+                    player.sendMessage(ChatColor.YELLOW + "Капкан демонтирован.");
+                    player.playSound(anchor.getLocation(), Sound.BLOCK_CHAIN_BREAK, 0.7f, 1.2f);
+                    return;
+                }
+            }
+        }
+
+        // 3. СТАНДАРТНАЯ УСТАНОВКА КАПКАНА НА ЗЕМЛЮ
         if (event.getAction() == Action.RIGHT_CLICK_BLOCK && handItem != null && event.getClickedBlock() != null) {
             ItemMeta meta = handItem.getItemMeta();
             if (meta != null && meta.getPersistentDataContainer().has(trapKey, PersistentDataType.BYTE)) {
                 event.setCancelled(true);
                 
                 Location spawnLoc = event.getClickedBlock().getRelative(event.getBlockFace()).getLocation().add(0.5, 0.02, 0.5);
-                spawnClosedTrap(spawnLoc);
                 
+                // Проверяем, нет ли уже тут капкана перед спавном нового
+                for (Entity e : spawnLoc.getWorld().getNearbyEntities(spawnLoc, 0.5, 0.5, 0.5)) {
+                    if (e instanceof ItemDisplay && e.getPersistentDataContainer().has(trapIdKey, PersistentDataType.STRING)) {
+                        player.sendMessage(ChatColor.RED + "Сюда нельзя поставить еще один капкан!");
+                        return;
+                    }
+                }
+
+                spawnClosedTrap(spawnLoc);
                 if (player.getGameMode() != GameMode.CREATIVE) {
                     handItem.setAmount(handItem.getAmount() - 1);
                 }
                 player.playSound(spawnLoc, Sound.BLOCK_ANVIL_PLACE, 0.5f, 1.5f);
                 player.sendMessage(ChatColor.GRAY + "Вы установили капкан. Взведите его (ПКМ пустой рукой).");
-                return;
-            }
-        }
-
-        // 2. Взаимодействие с капканом (Взвод / Маскировка / Приманка)
-        if (event.getAction() == Action.RIGHT_CLICK_BLOCK && event.getClickedBlock() != null) {
-            Location clickLoc = event.getClickedBlock().getLocation().add(0.5, 1.0, 0.5);
-            if (clickLoc.getWorld() != null) {
-                for (Entity entity : clickLoc.getWorld().getNearbyEntities(clickLoc, 1.2, 1.2, 1.2)) {
-                    if (entity instanceof ItemDisplay display && display.getPersistentDataContainer().has(trapIdKey, PersistentDataType.STRING)) {
-                        
-                        String id = display.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING);
-                        ItemDisplay anchor = findAnchor(display.getWorld(), id);
-                        
-                        if (anchor != null) {
-                            String state = anchor.getPersistentDataContainer().get(trapStateKey, PersistentDataType.STRING);
-                            
-                            if ("armed".equals(state) && player.isSneaking() && handItem != null) {
-                                String matName = handItem.getType().name();
-                                
-                                // А) МАСКИРОВКА ОПАВШИМИ ЛИСТЬЯМИ
-                                if (matName.contains("LEAVES")) {
-                                    event.setCancelled(true);
-                                    
-                                    if (!anchor.getPersistentDataContainer().has(trapCamouflageKey, PersistentDataType.BYTE)) {
-                                        anchor.getPersistentDataContainer().set(trapCamouflageKey, PersistentDataType.BYTE, (byte) 1);
-                                        
-                                        ItemDisplay camoDisplay = anchor.getWorld().spawn(anchor.getLocation(), ItemDisplay.class);
-                                        // Используем PINK_PETALS (розовые лепестки), так как они генерируют идеальный плоский слой опавшей листвы на полу
-                                        camoDisplay.setItemStack(new ItemStack(Material.PINK_PETALS));
-                                        camoDisplay.getPersistentDataContainer().set(trapIdKey, PersistentDataType.STRING, id);
-                                        camoDisplay.getPersistentDataContainer().set(trapPartKey, PersistentDataType.STRING, "camouflage");
-                                        
-                                        // Центрируем и слегка масштабируем, чтобы лепестки заполнили капкан
-                                        camoDisplay.setTransformation(new Transformation(
-                                                new Vector3f(-0.4f, 0.01f, -0.4f), // Выравнивание плоской структуры по центру
-                                                new AxisAngle4f(0, 0, 0, 1),
-                                                new Vector3f(0.8f, 0.8f, 0.8f), 
-                                                new AxisAngle4f()
-                                        ));
-                                        
-                                        if (player.getGameMode() != GameMode.CREATIVE) {
-                                            handItem.setAmount(handItem.getAmount() - 1);
-                                        }
-                                        
-                                        player.playSound(anchor.getLocation(), Sound.BLOCK_PINK_PETALS_PLACE, 1.2f, 0.8f);
-                                        player.sendMessage(ChatColor.DARK_GREEN + "Капкан укрыт слоем опавших листьев!");
-                                    }
-                                    return;
-                                }
-                                
-                                // Б) ПРИМАНКА ИЗ ПЛОТИ
-                                if (handItem.getType() == Material.ROTTEN_FLESH) {
-                                    event.setCancelled(true);
-                                    
-                                    if (!anchor.getPersistentDataContainer().has(trapBaitKey, PersistentDataType.BYTE)) {
-                                        anchor.getPersistentDataContainer().set(trapBaitKey, PersistentDataType.BYTE, (byte) 1);
-                                        
-                                        ItemDisplay baitDisplay = anchor.getWorld().spawn(anchor.getLocation(), ItemDisplay.class);
-                                        baitDisplay.setItemStack(new ItemStack(Material.ROTTEN_FLESH));
-                                        baitDisplay.getPersistentDataContainer().set(trapIdKey, PersistentDataType.STRING, id);
-                                        baitDisplay.getPersistentDataContainer().set(trapPartKey, PersistentDataType.STRING, "bait");
-                                        baitDisplay.setTransformation(new Transformation(
-                                                new Vector3f(0f, 0.05f, 0f),
-                                                new AxisAngle4f(0, 0, 0, 1),
-                                                new Vector3f(0.4f, 0.4f, 0.4f),
-                                                new AxisAngle4f()
-                                        ));
-                                        
-                                        if (player.getGameMode() != GameMode.CREATIVE) {
-                                            handItem.setAmount(handItem.getAmount() - 1);
-                                        }
-                                        
-                                        player.playSound(anchor.getLocation(), Sound.ENTITY_PLAYER_BURP, 0.6f, 0.8f);
-                                        player.sendMessage(ChatColor.GOLD + "Приманка установлена!");
-                                    }
-                                    return;
-                                }
-                            }
-                            
-                            // В) ОБЫЧНЫЙ ВЗВОД КАПКАНА
-                            if (handItem == null && ("closed".equals(state) || "triggered".equals(state))) {
-                                event.setCancelled(true);
-                                playArmingAnimation(player, anchor);
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Демонтаж рукой (ЛКМ)
-        if (event.getAction() == Action.LEFT_CLICK_BLOCK && event.getClickedBlock() != null) {
-            Location clickLoc = event.getClickedBlock().getLocation().add(0.5, 1.0, 0.5);
-            if (clickLoc.getWorld() != null) {
-                for (Entity entity : clickLoc.getWorld().getNearbyEntities(clickLoc, 1.2, 1.2, 1.2)) {
-                    if (entity instanceof ItemDisplay display) {
-                        if (display.getPersistentDataContainer().has(trapIdKey, PersistentDataType.STRING)) {
-                            String id = display.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING);
-                            
-                            removeTrapEntities(display.getWorld(), id);
-                            
-                            ItemStack trapItem = new ItemStack(Material.CHAIN);
-                            ItemMeta m = trapItem.getItemMeta();
-                            if (m != null) {
-                                m.setDisplayName(ChatColor.DARK_GRAY + "Медвежий капкан");
-                                m.getPersistentDataContainer().set(trapKey, PersistentDataType.BYTE, (byte) 1);
-                                trapItem.setItemMeta(m);
-                            }
-                            player.getInventory().addItem(trapItem);
-                            
-                            player.sendMessage(ChatColor.YELLOW + "Капкан демонтирован.");
-                            player.playSound(clickLoc, Sound.BLOCK_CHAIN_BREAK, 0.7f, 1.2f);
-                            break;
-                        }
-                    }
-                }
             }
         }
     }
@@ -300,8 +321,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                 anchor.getPersistentDataContainer().set(trapStateKey, PersistentDataType.STRING, "armed");
                 loc.getWorld().playSound(loc, Sound.BLOCK_LEVER_CLICK, 0.9f, 0.7f);
                 player.sendMessage(ChatColor.GREEN + "Капкан успешно взведен!");
-            }
-        }.runTaskLater(this, 10L);
+            } carbon.runTaskLater(this, 10L);
     }
 
     private void startDetectionTask() {
@@ -322,7 +342,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                             if ("trigger_anchor".equals(part) && "armed".equals(state)) {
                                 Location loc = display.getLocation();
                                 
-                                // Логика приманки
+                                // Логика ИИ приманки
                                 if (runBaitLogic && display.getPersistentDataContainer().has(trapBaitKey, PersistentDataType.BYTE)) {
                                     loc.getWorld().spawnParticle(Particle.SNEEZE, loc.clone().add(0, 0.1, 0), 3, 0.2, 0.0, 0.2, 0.01);
                                     
@@ -331,7 +351,6 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                                             if (zombie.getTarget() == null || zombie.getTarget() instanceof Player) {
                                                 Location targetLoc = loc.clone();
                                                 zombie.teleport(zombie.getLocation().setDirection(targetLoc.toVector().subtract(zombie.getLocation().toVector())));
-                                                
                                                 if (Math.random() < 0.2) {
                                                     loc.getWorld().playSound(loc, Sound.ENTITY_ZOMBIE_AMBIENT, 0.3f, 0.5f);
                                                 }
@@ -340,7 +359,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                                     }
                                 }
 
-                                // Детекция шагов
+                                // Регистрация шагов жертвы
                                 for (Entity entity : loc.getWorld().getNearbyEntities(loc, 0.5, 0.85, 0.5)) {
                                     if (entity instanceof LivingEntity && !(entity instanceof ArmorStand)) {
                                         if (entity instanceof Player && ((Player) entity).getGameMode() == GameMode.CREATIVE) {
@@ -367,18 +386,18 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         loc.getWorld().playSound(loc, Sound.BLOCK_ANVIL_LAND, 0.9f, 1.8f);
         loc.getWorld().spawnParticle(Particle.CRIT, loc.clone().add(0, 0.2, 0), 20, 0.1, 0.1, 0.1, 0.1);
 
-        // Если была маскировка — уничтожаем её с частицами разлетающейся листвы
+        // Эффект разрушения объемной кучи листьев
         if (anchor.getPersistentDataContainer().has(trapCamouflageKey, PersistentDataType.BYTE)) {
             anchor.getPersistentDataContainer().remove(trapCamouflageKey);
-            loc.getWorld().playSound(loc, Sound.BLOCK_CHERRY_LEAVES_BREAK, 1.1f, 0.7f);
-            loc.getWorld().spawnParticle(Particle.HAPPY_VILLAGER, loc.clone().add(0, 0.05, 0), 20, 0.3, 0.05, 0.3, 0.05);
+            loc.getWorld().playSound(loc, Sound.BLOCK_CHERRY_LEAVES_BREAK, 1.2f, 0.5f);
+            loc.getWorld().spawnParticle(Particle.HAPPY_VILLAGER, loc.clone().add(0, 0.2, 0), 30, 0.4, 0.2, 0.4, 0.1);
         }
         
         if (anchor.getPersistentDataContainer().has(trapBaitKey, PersistentDataType.BYTE)) {
             anchor.getPersistentDataContainer().remove(trapBaitKey);
         }
 
-        // Анимация захлопывания
+        // Хлопок челюстей и удаление декораций
         for (Entity entity : loc.getWorld().getNearbyEntities(loc, 2.0, 2.0, 2.0)) {
             if (entity instanceof ItemDisplay part && id.equals(part.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING))) {
                 String pName = part.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING);
@@ -400,7 +419,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                             new AxisAngle4f()
                     ));
                 } else if ("bait".equals(pName) || "camouflage".equals(pName)) {
-                    part.remove();
+                    part.remove(); // Все слои кучи листьев и мясо исчезают
                 }
             }
         }
