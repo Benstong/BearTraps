@@ -1,4 +1,4 @@
-package ru.yourname.beartraps;
+package ru.beartraps;
 
 import org.bukkit.*;
 import org.bukkit.command.Command;
@@ -73,7 +73,6 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
             if (meta != null && meta.getPersistentDataContainer().has(trapKey, PersistentDataType.BYTE)) {
                 event.setCancelled(true);
                 
-                // Высчитываем блок над тем, на который кликнули
                 Location spawnLoc = event.getClickedBlock().getRelative(event.getBlockFace()).getLocation().add(0.5, 0.0, 0.5);
                 spawnTrap(spawnLoc);
                 
@@ -88,28 +87,31 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         // 2. Демонтаж рукой без консоли (ЛКМ по блоку с капканом)
         if (event.getAction() == Action.LEFT_CLICK_BLOCK && event.getClickedBlock() != null) {
             Location clickLoc = event.getClickedBlock().getLocation().add(0.5, 1.0, 0.5);
-            for (ItemDisplay display : clickLoc.getNearbyEntitiesByType(ItemDisplay.class, 1.5)) {
-                if (display.getPersistentDataContainer().has(trapIdKey, PersistentDataType.STRING)) {
-                    String id = display.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING);
-                    String state = display.getPersistentDataContainer().get(trapStateKey, PersistentDataType.STRING);
-                    
-                    removeTrapEntities(display.getWorld(), id);
-                    
-                    // Если капкан убирают целым (не сработавшим), возвращаем предмет в инвентарь
-                    if (player.getGameMode() == GameMode.CREATIVE || !"triggered".equals(state)) {
-                        ItemStack trapItem = new ItemStack(Material.CHAIN);
-                        ItemMeta meta = trapItem.getItemMeta();
-                        if (meta != null) {
-                            meta.setDisplayName(ChatColor.DARK_GRAY + "Медвежий капкан");
-                            meta.getPersistentDataContainer().set(trapKey, PersistentDataType.BYTE, (byte) 1);
-                            trapItem.setItemMeta(meta);
+            if (clickLoc.getWorld() != null) {
+                for (Entity entity : clickLoc.getWorld().getNearbyEntities(clickLoc, 1.5, 1.5, 1.5)) {
+                    if (entity instanceof ItemDisplay display) {
+                        if (display.getPersistentDataContainer().has(trapIdKey, PersistentDataType.STRING)) {
+                            String id = display.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING);
+                            String state = display.getPersistentDataContainer().get(trapStateKey, PersistentDataType.STRING);
+                            
+                            removeTrapEntities(display.getWorld(), id);
+                            
+                            if (player.getGameMode() == GameMode.CREATIVE || !"triggered".equals(state)) {
+                                ItemStack trapItem = new ItemStack(Material.CHAIN);
+                                ItemMeta meta = trapItem.getItemMeta();
+                                if (meta != null) {
+                                    meta.setDisplayName(ChatColor.DARK_GRAY + "Медвежий капкан");
+                                    meta.getPersistentDataContainer().set(trapKey, PersistentDataType.BYTE, (byte) 1);
+                                    trapItem.setItemMeta(meta);
+                                }
+                                player.getInventory().addItem(trapItem);
+                            }
+                            
+                            player.sendMessage(ChatColor.YELLOW + "Капкан успешно демонтирован.");
+                            player.playSound(clickLoc, Sound.BLOCK_CHAIN_BREAK, 0.8f, 1.2f);
+                            break;
                         }
-                        player.getInventory().addItem(trapItem);
                     }
-                    
-                    player.sendMessage(ChatColor.YELLOW + "Капкан успешно демонтирован.");
-                    player.playSound(clickLoc, Sound.BLOCK_CHAIN_BREAK, 0.8f, 1.2f);
-                    break;
                 }
             }
         }
@@ -118,7 +120,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
     private void spawnTrap(Location loc) {
         String id = UUID.randomUUID().toString();
 
-        // Основание капкана (Кладем цепь горизонтально)
+        // Основание капкана
         ItemDisplay base = loc.getWorld().spawn(loc, ItemDisplay.class);
         base.setItemStack(new ItemStack(Material.CHAIN));
         base.getPersistentDataContainer().set(trapIdKey, PersistentDataType.STRING, id);
@@ -126,12 +128,12 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         base.getPersistentDataContainer().set(trapStateKey, PersistentDataType.STRING, "armed");
         base.setTransformation(new Transformation(
                 new Vector3f(0, 0.02f, 0),
-                new AxisAngle4f((float) Math.toRadians(90), 1, 0, 0), // Ложим на бок
+                new AxisAngle4f((float) Math.toRadians(90), 1, 0, 0),
                 new Vector3f(1.2f, 0.2f, 1.2f),
                 new AxisAngle4f()
         ));
 
-        // Левая челюсть (Железный самородок развернут на -45 градусов)
+        // Левая челюсть
         ItemDisplay leftJaw = loc.getWorld().spawn(loc, ItemDisplay.class);
         leftJaw.setItemStack(new ItemStack(Material.IRON_NUGGET));
         leftJaw.getPersistentDataContainer().set(trapIdKey, PersistentDataType.STRING, id);
@@ -143,7 +145,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                 new AxisAngle4f()
         ));
 
-        // Правая челюсть (Железный самородок развернут на +45 градусов)
+        // Правая челюсть
         ItemDisplay rightJaw = loc.getWorld().spawn(loc, ItemDisplay.class);
         rightJaw.setItemStack(new ItemStack(Material.IRON_NUGGET));
         rightJaw.getPersistentDataContainer().set(trapIdKey, PersistentDataType.STRING, id);
@@ -166,12 +168,10 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                             String part = display.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING);
                             String state = display.getPersistentDataContainer().get(trapStateKey, PersistentDataType.STRING);
                             
-                            // Проверяем триггер только на "базе", чтобы не гонять код 3 раза для одного капкана
                             if ("base".equals(part) && "armed".equals(state)) {
                                 Location loc = display.getLocation();
                                 for (Entity entity : loc.getWorld().getNearbyEntities(loc, 0.6, 0.6, 0.6)) {
                                     if (entity instanceof LivingEntity && !(entity instanceof ArmorStand)) {
-                                        // Креативных игроков не трогаем
                                         if (entity instanceof Player && ((Player) entity).getGameMode() == GameMode.CREATIVE) {
                                             continue;
                                         }
@@ -184,7 +184,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                     }
                 }
             }
-        }.runTaskTimer(this, 0L, 4L); // Проверка каждые 4 тика (стабильно и без лагов)
+        }.runTaskTimer(this, 0L, 4L);
     }
 
     private void triggerTrap(ItemDisplay base, LivingEntity victim) {
@@ -196,37 +196,38 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         loc.getWorld().playSound(loc, Sound.BLOCK_ANVIL_LAND, 0.9f, 1.9f);
         loc.getWorld().spawnParticle(Particle.CRIT, loc.clone().add(0, 0.2, 0), 25, 0.1, 0.1, 0.1, 0.1);
 
-        // Запуск анимации схлопывания зубьев (интерполяция матриц за 3 тика)
-        for (ItemDisplay jaw : loc.getNearbyEntitiesByType(ItemDisplay.class, 2.0)) {
-            if (id.equals(jaw.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING))) {
-                String part = jaw.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING);
-                
-                jaw.setInterpolationDuration(3); // Скорость схлопывания в тиках
-                jaw.setInterpolationDelay(0);
-                
-                if ("left".equals(part)) {
-                    jaw.setTransformation(new Transformation(
-                            new Vector3f(-0.05f, 0.05f, 0),
-                            new AxisAngle4f(0, 0, 0, 1), // Сброс угла вращения в 0
-                            new Vector3f(2.2f, 2.2f, 2.2f),
-                            new AxisAngle4f()
-                    ));
-                } else if ("right".equals(part)) {
-                    jaw.setTransformation(new Transformation(
-                            new Vector3f(0.05f, 0.05f, 0),
-                            new AxisAngle4f(0, 0, 0, 1), // Сброс угла вращения в 0
-                            new Vector3f(2.2f, 2.2f, 2.2f),
-                            new AxisAngle4f()
-                    ));
+        if (loc.getWorld() != null) {
+            for (Entity entity : loc.getWorld().getNearbyEntities(loc, 2.0, 2.0, 2.0)) {
+                if (entity instanceof ItemDisplay jaw) {
+                    if (id.equals(jaw.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING))) {
+                        String part = jaw.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING);
+                        
+                        jaw.setInterpolationDuration(3);
+                        jaw.setInterpolationDelay(0);
+                        
+                        if ("left".equals(part)) {
+                            jaw.setTransformation(new Transformation(
+                                    new Vector3f(-0.05f, 0.05f, 0),
+                                    new AxisAngle4f(0, 0, 0, 1),
+                                    new Vector3f(2.2f, 2.2f, 2.2f),
+                                    new AxisAngle4f()
+                            ));
+                        } else if ("right".equals(part)) {
+                            jaw.setTransformation(new Transformation(
+                                    new Vector3f(0.05f, 0.05f, 0),
+                                    new AxisAngle4f(0, 0, 0, 1),
+                                    new Vector3f(2.2f, 2.2f, 2.2f),
+                                    new AxisAngle4f()
+                            ));
+                        }
+                    }
                 }
             }
         }
 
-        // Нанесение урона и дебафф (Замедление 4 уровня на 5 секунд)
         victim.damage(8.0); 
         victim.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 100, 3, false, true));
 
-        // Полное удаление структуры капкана через 3 секунды после срабатывания
         new BukkitRunnable() {
             @Override
             public void run() {
@@ -267,13 +268,17 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
             int removedCount = 0;
             Location center = player.getLocation();
             
-            for (ItemDisplay display : center.getNearbyEntitiesByType(ItemDisplay.class, radius)) {
-                if (display.getPersistentDataContainer().has(trapPartKey, PersistentDataType.STRING) &&
-                    "base".equals(display.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING))) {
-                    
-                    String id = display.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING);
-                    removeTrapEntities(player.getWorld(), id);
-                    removedCount++;
+            if (center.getWorld() != null) {
+                for (Entity entity : center.getWorld().getNearbyEntities(center, radius, radius, radius)) {
+                    if (entity instanceof ItemDisplay display) {
+                        if (display.getPersistentDataContainer().has(trapPartKey, PersistentDataType.STRING) &&
+                            "base".equals(display.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING))) {
+                            
+                            String id = display.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING);
+                            removeTrapEntities(player.getWorld(), id);
+                            removedCount++;
+                        }
+                    }
                 }
             }
 
