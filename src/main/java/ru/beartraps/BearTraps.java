@@ -29,7 +29,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
     private NamespacedKey trapIdKey;
     private NamespacedKey trapPartKey;
     private NamespacedKey trapStateKey;
-    private NamespacedKey trapBaitKey; // Ключ для проверки наличия приманки
+    private NamespacedKey trapBaitKey;
 
     @Override
     public void onEnable() {
@@ -46,7 +46,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         
         registerRecipe();
         startDetectionTask();
-        getLogger().info("BearTraps (Приманка для Зомби) запущен!");
+        getLogger().info("BearTraps (Многоразовый с приманкой) успешно запущен!");
     }
 
     private void registerRecipe() {
@@ -70,7 +70,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         Player player = event.getPlayer();
         ItemStack handItem = event.getItem();
 
-        // 1. Установка закрытого капкана (ПКМ)
+        // 1. Установка закрытого капкана на землю (ПКМ)
         if (event.getAction() == Action.RIGHT_CLICK_BLOCK && handItem != null && event.getClickedBlock() != null) {
             ItemMeta meta = handItem.getItemMeta();
             if (meta != null && meta.getPersistentDataContainer().has(trapKey, PersistentDataType.BYTE)) {
@@ -88,7 +88,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
             }
         }
 
-        // 2. Взаимодействие с установленным капканом (Взвод / Установка приманки)
+        // 2. Взаимодействие с установленным капканом (Взвод или добавление приманки)
         if (event.getAction() == Action.RIGHT_CLICK_BLOCK && event.getClickedBlock() != null) {
             Location clickLoc = event.getClickedBlock().getLocation().add(0.5, 1.0, 0.5);
             if (clickLoc.getWorld() != null) {
@@ -101,23 +101,22 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                         if (anchor != null) {
                             String state = anchor.getPersistentDataContainer().get(trapStateKey, PersistentDataType.STRING);
                             
-                            // Ситуация А: Игрок нажал Shift + ПКМ с Гнилой плотью по ОТКРЫТОМУ (armed) капкану
+                            // А) Заряжаем приманку: Shift + ПКМ с Гнилой плотью по ОТКРЫТОМУ капкану
                             if ("armed".equals(state) && player.isSneaking() && handItem != null && handItem.getType() == Material.ROTTEN_FLESH) {
                                 event.setCancelled(true);
                                 
-                                // Проверяем, нет ли уже там приманки
                                 if (!anchor.getPersistentDataContainer().has(trapBaitKey, PersistentDataType.BYTE)) {
                                     anchor.getPersistentDataContainer().set(trapBaitKey, PersistentDataType.BYTE, (byte) 1);
                                     
-                                    // Спавним гнилую плоть визуально по центру капкана
+                                    // Отображаем гнилую плоть в капкане
                                     ItemDisplay baitDisplay = anchor.getWorld().spawn(anchor.getLocation(), ItemDisplay.class);
                                     baitDisplay.setItemStack(new ItemStack(Material.ROTTEN_FLESH));
                                     baitDisplay.getPersistentDataContainer().set(trapIdKey, PersistentDataType.STRING, id);
                                     baitDisplay.getPersistentDataContainer().set(trapPartKey, PersistentDataType.STRING, "bait");
                                     baitDisplay.setTransformation(new Transformation(
-                                            new Vector3f(0f, 0.08f, 0f), // Чуть-чуть приподнята в центре
+                                            new Vector3f(0f, 0.08f, 0f),
                                             new AxisAngle4f(0, 0, 0, 1),
-                                            new Vector3f(0.4f, 0.4f, 0.4f), // Маленький кусочек мяса
+                                            new Vector3f(0.4f, 0.4f, 0.4f),
                                             new AxisAngle4f()
                                     ));
                                     
@@ -126,12 +125,12 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                                     }
                                     
                                     player.playSound(anchor.getLocation(), Sound.ENTITY_PLAYER_BURP, 0.6f, 0.8f);
-                                    player.sendMessage(ChatColor.GOLD + "Вы положили гнилую плоть в капкан. Зомби поблизости учуют запах!");
+                                    player.sendMessage(ChatColor.GOLD + "Вы положили приманку. Зомби поблизости учуют её запах!");
                                 }
                                 return;
                             }
                             
-                            // Ситуация Б: Обычный взвод пустого/захлопнутого капкана (ПКМ без предметов)
+                            // Б) Обычный взвод: ПКМ пустой рукой по закрытому/схлопнутому капкану
                             if (handItem == null && ("closed".equals(state) || "triggered".equals(state))) {
                                 event.setCancelled(true);
                                 playArmingAnimation(player, anchor);
@@ -143,7 +142,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
             }
         }
 
-        // 3. Демонтаж рукой (ЛКМ)
+        // 3. Демонтаж в инвентарь (ЛКМ рукой по капкану)
         if (event.getAction() == Action.LEFT_CLICK_BLOCK && event.getClickedBlock() != null) {
             Location clickLoc = event.getClickedBlock().getLocation().add(0.5, 1.0, 0.5);
             if (clickLoc.getWorld() != null) {
@@ -163,7 +162,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                             }
                             player.getInventory().addItem(trapItem);
                             
-                            player.sendMessage(ChatColor.YELLOW + "Капкан успешно демонтирован.");
+                            player.sendMessage(ChatColor.YELLOW + "Капкан демонтирован.");
                             player.playSound(clickLoc, Sound.BLOCK_CHAIN_BREAK, 0.7f, 1.2f);
                             break;
                         }
@@ -176,7 +175,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
     private void spawnClosedTrap(Location loc) {
         String id = UUID.randomUUID().toString();
 
-        // 1. СТАТИЧЕСКОЕ ОСНОВАНИЕ
+        // Основание из цепей
         float[][] baseOffsets = {
             {0.0f, 0.01f, -0.3f, 0}, {0.0f, 0.01f, 0.3f, 0},
             {-0.3f, 0.01f, 0.0f, 90}, {0.3f, 0.01f, 0.0f, 90}
@@ -197,16 +196,16 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
             ));
         }
 
-        // 2. ЧЕЛЮСТИ И ЗУБЬЯ
+        // Челюсти и острые зубья
         float[] teethZOffsets = {-0.25f, -0.1f, 0.1f, 0.25f};
 
+        // Левая сторона
         spawnMovingPart(loc, id, "left", Material.CHAIN, new Vector3f(-0.04f, 0.18f, 0f), -4, new Vector3f(0.8f, 0.15f, 0.8f));
         for (float zOffset : teethZOffsets) {
             spawnMovingPart(loc, id, "left", Material.IRON_NUGGET, new Vector3f(-0.04f, 0.20f, zOffset), -4, new Vector3f(0.4f, 0.4f, 0.4f));
         }
 
-        long activeTrapsCount = loc.getWorld().getEntitiesByClass(ItemDisplay.class).stream()
-                .filter(e -> "trigger_anchor".equals(e.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING))).count();
+        // Правая сторона
         spawnMovingPart(loc, id, "right", Material.CHAIN, new Vector3f(0.04f, 0.18f, 0f), 4, new Vector3f(0.8f, 0.15f, 0.8f));
         for (float zOffset : teethZOffsets) {
             spawnMovingPart(loc, id, "right", Material.IRON_NUGGET, new Vector3f(0.04f, 0.20f, zOffset), 4, new Vector3f(0.4f, 0.4f, 0.4f));
@@ -232,7 +231,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         String id = anchor.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING);
 
         player.swingMainHand();
-        player.setSneaking(true);
+        player.setSneaking(true); // Заставляем игрока присесть при взводе
         loc.getWorld().playSound(loc, Sound.BLOCK_CHAIN_PLACE, 0.8f, 0.8f);
         loc.getWorld().playSound(loc, Sound.BLOCK_IRON_DOOR_OPEN, 0.5f, 0.5f);
 
@@ -241,7 +240,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                 String side = jaw.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING);
                 
                 if ("left".equals(side) || "right".equals(side)) {
-                    jaw.setInterpolationDuration(10);
+                    jaw.setInterpolationDuration(10); // Разведение челюстей за 0.5 секунд
                     jaw.setInterpolationDelay(0);
                     
                     Vector3f currentTrans = jaw.getTransformation().getTranslation();
@@ -265,7 +264,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         new BukkitRunnable() {
             @Override
             public void run() {
-                if (player.isOnline()) player.setSneaking(false);
+                if (player.isOnline()) player.setSneaking(false); // Поднимаем игрока обратно
                 anchor.getPersistentDataContainer().set(trapStateKey, PersistentDataType.STRING, "armed");
                 loc.getWorld().playSound(loc, Sound.BLOCK_LEVER_CLICK, 0.9f, 0.7f);
                 player.sendMessage(ChatColor.GREEN + "Капкан успешно взведен!");
@@ -280,7 +279,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
             @Override
             public void run() {
                 baitTimer++;
-                boolean runBaitLogic = (baitTimer % 10 == 0); // Каждые 2 секунды (40 тиков) пересчитываем ИИ приманки
+                boolean runBaitLogic = (baitTimer % 10 == 0); // Перерасчет ИИ приманки каждые 2 секунды
 
                 for (World world : Bukkit.getWorlds()) {
                     for (ItemDisplay display : world.getEntitiesByClass(ItemDisplay.class)) {
@@ -291,21 +290,26 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                             if ("trigger_anchor".equals(part) && "armed".equals(state)) {
                                 Location loc = display.getLocation();
                                 
-                                // А) ЛОГИКА ПРИМАНКИ (Привлечение зомби)
+                                // А) Логика приманки: безопасное привлечение зомби для чистой Spigot/Paper
                                 if (runBaitLogic && display.getPersistentDataContainer().has(trapBaitKey, PersistentDataType.BYTE)) {
-                                    // Визуальные споры запаха мяса
                                     loc.getWorld().spawnParticle(Particle.SNEEZE, loc.clone().add(0, 0.1, 0), 3, 0.2, 0.0, 0.2, 0.01);
                                     
-                                    // Агрим зомби в радиусе 16 блоков
                                     for (Entity nearby : loc.getWorld().getNearbyEntities(loc, 16.0, 5.0, 16.0)) {
                                         if (nearby instanceof Zombie zombie) {
-                                            // Если у зомби нет цели или он идет за игроком — переманиваем его на точку капкана
-                                            zombie.getPathfinder().moveTo(loc, 1.2);
+                                            // Если зомби отвлечен на игрока или бездельничает, разворачиваем его к капкану
+                                            if (zombie.getTarget() == null || zombie.getTarget() instanceof Player) {
+                                                Location targetLoc = loc.clone();
+                                                zombie.teleport(zombie.getLocation().setDirection(targetLoc.toVector().subtract(zombie.getLocation().toVector())));
+                                                
+                                                if (Math.random() < 0.2) {
+                                                    loc.getWorld().playSound(loc, Sound.ENTITY_ZOMBIE_AMBIENT, 0.3f, 0.5f);
+                                                }
+                                            }
                                         }
                                     }
                                 }
 
-                                // Б) ОБЫЧНАЯ ДЕТЕКЦИЯ НАСТУПАНИЯ
+                                // Б) Проверка наступания
                                 for (Entity entity : loc.getWorld().getNearbyEntities(loc, 0.5, 0.85, 0.5)) {
                                     if (entity instanceof LivingEntity && !(entity instanceof ArmorStand)) {
                                         if (entity instanceof Player && ((Player) entity).getGameMode() == GameMode.CREATIVE) {
@@ -332,18 +336,18 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         loc.getWorld().playSound(loc, Sound.BLOCK_ANVIL_LAND, 0.9f, 1.8f);
         loc.getWorld().spawnParticle(Particle.CRIT, loc.clone().add(0, 0.2, 0), 20, 0.1, 0.1, 0.1, 0.1);
 
-        // Очищаем приманку из данных и удаляем её 3D модель
+        // Сбрасываем флаг приманки
         if (anchor.getPersistentDataContainer().has(trapBaitKey, PersistentDataType.BYTE)) {
             anchor.getPersistentDataContainer().remove(trapBaitKey);
         }
 
-        // Анимация моментального схлопывания деталей
+        // Анимация моментального закрытия челюстей капкана
         for (Entity entity : loc.getWorld().getNearbyEntities(loc, 2.0, 2.0, 2.0)) {
             if (entity instanceof ItemDisplay part && id.equals(part.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING))) {
                 String pName = part.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING);
                 
                 if ("left".equals(pName) || "right".equals(pName)) {
-                    part.setInterpolationDuration(3);
+                    part.setInterpolationDuration(3); // Закрывается мгновенно за 3 тика
                     part.setInterpolationDelay(0);
                     
                     Vector3f currentTrans = part.getTransformation().getTranslation();
@@ -359,13 +363,12 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                             new AxisAngle4f()
                     ));
                 } else if ("bait".equals(pName)) {
-                    // Кусочек плоти уничтожается ("съедается" капканом)
-                    part.remove();
+                    part.remove(); // Моделька приманки уничтожается при активации капкана
                 }
             }
         }
 
-        // Нанесение урона
+        // Урон и эффекты обездвиживания
         victim.damage(8.0); 
         victim.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 140, 5, false, true));
         victim.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 40, 0, false, false));
