@@ -44,7 +44,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         
         registerRecipe();
         startDetectionTask();
-        getLogger().info("BearTraps с объемными цепями и зубьями запущен!");
+        getLogger().info("BearTraps (Приподнятый с точным уроном) запущен!");
     }
 
     private void registerRecipe() {
@@ -73,7 +73,8 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
             if (meta != null && meta.getPersistentDataContainer().has(trapKey, PersistentDataType.BYTE)) {
                 event.setCancelled(true);
                 
-                Location spawnLoc = event.getClickedBlock().getRelative(event.getBlockFace()).getLocation().add(0.5, -0.1, 0.5);
+                // ИЗМЕНЕНИЕ: приподняли координату Y с -0.1 до 0.02, чтобы модель лежала на блоке
+                Location spawnLoc = event.getClickedBlock().getRelative(event.getBlockFace()).getLocation().add(0.5, 0.02, 0.5);
                 spawnTrap(spawnLoc);
                 
                 if (player.getGameMode() != GameMode.CREATIVE) {
@@ -84,7 +85,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
             }
         }
 
-        // Демонтаж рукой (ЛКМ по капканному блоку)
+        // Демонтаж рукой (ЛКМ)
         if (event.getAction() == Action.LEFT_CLICK_BLOCK && event.getClickedBlock() != null) {
             Location clickLoc = event.getClickedBlock().getLocation().add(0.5, 1.0, 0.5);
             if (clickLoc.getWorld() != null) {
@@ -120,45 +121,42 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
     private void spawnTrap(Location loc) {
         String id = UUID.randomUUID().toString();
 
-        // 1. КОРПУС ИЗ ЦЕПЕЙ (4 плоские цепи, образующие квадратное основание-рамку на земле)
+        // 1. КОРПУС ИЗ ЦЕПЕЙ (Рамка основания на земле)
         float[][] baseOffsets = {
-            {0.0f, 0.0f, -0.3f, 0},     // Север
-            {0.0f, 0.0f, 0.3f, 0},      // Юг
-            {-0.3f, 0.0f, 0.0f, 90},    // Запад (развернута)
-            {0.3f, 0.0f, 0.0f, 90}      // Восток (развернута)
+            {0.0f, 0.01f, -0.3f, 0},
+            {0.0f, 0.01f, 0.3f, 0},
+            {-0.3f, 0.01f, 0.0f, 90},
+            {0.3f, 0.01f, 0.0f, 90}
         };
 
         for (int i = 0; i < baseOffsets.length; i++) {
             ItemDisplay basePart = loc.getWorld().spawn(loc, ItemDisplay.class);
             basePart.setItemStack(new ItemStack(Material.CHAIN));
             basePart.getPersistentDataContainer().set(trapIdKey, PersistentDataType.STRING, id);
-            // Первую деталь делаем главным триггером (якорем)
             basePart.getPersistentDataContainer().set(trapPartKey, PersistentDataType.STRING, i == 0 ? "trigger_anchor" : "static_base");
             if (i == 0) basePart.getPersistentDataContainer().set(trapStateKey, PersistentDataType.STRING, "armed");
 
             basePart.setTransformation(new Transformation(
-                    new Vector3f(baseOffsets[i][0], 0.02f, baseOffsets[i][2]),
-                    new AxisAngle4f((float) Math.toRadians(90), 1, 0, 0), // Кладем горизонтально
+                    new Vector3f(baseOffsets[i][0], baseOffsets[i][1], baseOffsets[i][2]),
+                    new AxisAngle4f((float) Math.toRadians(90), 1, 0, 0),
                     new Vector3f(0.8f, 0.15f, 0.8f),
                     new AxisAngle4f((float) Math.toRadians(baseOffsets[i][3]), 0, 0, 1)
             ));
         }
 
-        // 2. ПОДВИЖНЫЕ ЧЕЛЮСТИ И ЗУБЬЯ
-        // Смещение зубов вдоль оси Z, чтобы они стояли в ряд
+        // 2. ЗУБЬЯ И БОКОВЫЕ ЦЕПИ
         float[] teethZOffsets = {-0.25f, -0.1f, 0.1f, 0.25f};
 
-        // Левая сторона (Взведена: отклонена влево на -65 градусов)
-        spawnMovingPart(loc, id, "left", Material.CHAIN, new Vector3f(-0.2f, 0.04f, 0f), -65, new Vector3f(0.8f, 0.15f, 0.8f));
+        // Левая челюсть и её зубья
+        spawnMovingPart(loc, id, "left", Material.CHAIN, new Vector3f(-0.2f, 0.05f, 0f), -65, new Vector3f(0.8f, 0.15f, 0.8f));
         for (float zOffset : teethZOffsets) {
-            // Зубья делаем маленькими (масштаб 0.4)
-            spawnMovingPart(loc, id, "left", Material.IRON_NUGGET, new Vector3f(-0.25f, 0.06f, zOffset), -65, new Vector3f(0.4f, 0.4f, 0.4f));
+            spawnMovingPart(loc, id, "left", Material.IRON_NUGGET, new Vector3f(-0.25f, 0.07f, zOffset), -65, new Vector3f(0.4f, 0.4f, 0.4f));
         }
 
-        // Правая сторона (Взведена: отклонена вправо на 65 градусов)
-        spawnMovingPart(loc, id, "right", Material.CHAIN, new Vector3f(0.2f, 0.04f, 0f), 65, new Vector3f(0.8f, 0.15f, 0.8f));
+        // Правая челюсть и её зубья
+        spawnMovingPart(loc, id, "right", Material.CHAIN, new Vector3f(0.2f, 0.05f, 0f), 65, new Vector3f(0.8f, 0.15f, 0.8f));
         for (float zOffset : teethZOffsets) {
-            spawnMovingPart(loc, id, "right", Material.IRON_NUGGET, new Vector3f(0.25f, 0.06f, zOffset), 65, new Vector3f(0.4f, 0.4f, 0.4f));
+            spawnMovingPart(loc, id, "right", Material.IRON_NUGGET, new Vector3f(0.25f, 0.07f, zOffset), 65, new Vector3f(0.4f, 0.4f, 0.4f));
         }
     }
 
@@ -170,7 +168,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         
         display.setTransformation(new Transformation(
                 translation,
-                new AxisAngle4f((float) Math.toRadians(angle), 0, 0, 1), // Наклон взвода
+                new AxisAngle4f((float) Math.toRadians(angle), 0, 0, 1),
                 scale,
                 new AxisAngle4f()
         ));
@@ -186,10 +184,10 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                             String part = display.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING);
                             String state = display.getPersistentDataContainer().get(trapStateKey, PersistentDataType.STRING);
                             
-                            // Проверяем триггер только на "якоре"
                             if ("trigger_anchor".equals(part) && "armed".equals(state)) {
                                 Location loc = display.getLocation();
-                                for (Entity entity : loc.getWorld().getNearbyEntities(loc, 0.55, 0.55, 0.55)) {
+                                // ИЗМЕНЕНИЕ: Увеличили зону детекции по высоте до 0.85, чтобы точно ловить наступающего игрока
+                                for (Entity entity : loc.getWorld().getNearbyEntities(loc, 0.5, 0.85, 0.5)) {
                                     if (entity instanceof LivingEntity && !(entity instanceof ArmorStand)) {
                                         if (entity instanceof Player && ((Player) entity).getGameMode() == GameMode.CREATIVE) {
                                             continue;
@@ -211,30 +209,29 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         anchor.getPersistentDataContainer().set(trapStateKey, PersistentDataType.STRING, "triggered");
 
         Location loc = anchor.getLocation();
-        loc.getWorld().playSound(loc, Sound.ENTITY_IRON_GOLEM_DAMAGE, 1.0f, 0.6f);
-        loc.getWorld().playSound(loc, Sound.BLOCK_ANVIL_LAND, 0.8f, 1.8f);
+        loc.getWorld().playSound(loc, Sound.ENTITY_IRON_GOLEM_DAMAGE, 1.0f, 0.5f);
+        loc.getWorld().playSound(loc, Sound.BLOCK_ANVIL_LAND, 0.9f, 1.8f);
         loc.getWorld().spawnParticle(Particle.CRIT, loc.clone().add(0, 0.2, 0), 20, 0.1, 0.1, 0.1, 0.1);
 
-        // АНИМАЦИЯ СХЛОПЫВАНИЯ (Зубья и боковые цепи сводятся в центр)
+        // Анимация моментального схлопывания зубьев и цепей в центр
         for (Entity entity : loc.getWorld().getNearbyEntities(loc, 2.0, 2.0, 2.0)) {
             if (entity instanceof ItemDisplay jaw) {
                 if (id.equals(jaw.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING))) {
                     String side = jaw.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING);
                     
                     if ("left".equals(side) || "right".equals(side)) {
-                        // Плавное закрытие за 3 тика (очень быстро, эффект резкого щелчка)
                         jaw.setInterpolationDuration(3);
                         jaw.setInterpolationDelay(0);
                         
                         Vector3f currentTrans = jaw.getTransformation().getTranslation();
                         Vector3f currentScale = jaw.getTransformation().getScale();
                         
-                        // Сводим координаты X ближе к центру и обнуляем угол поворота (захлопнуты вертикально)
-                        float newX = "left".equals(side) ? -0.05f : 0.05f;
+                        float newX = "left".equals(side) ? -0.04f : 0.04f;
+                        float newAngle = "left".equals(side) ? -4f : 4f;
                         
                         jaw.setTransformation(new Transformation(
-                                new Vector3f(newX, 0.15f, currentTrans.z), // Приподнимаются вверх при закрытии
-                                new AxisAngle4f((float) Math.toRadians("left".equals(side) ? -5 : 5), 0, 0, 1), // Практически ровно
+                                new Vector3f(newX, 0.18f, currentTrans.z), 
+                                new AxisAngle4f((float) Math.toRadians(newAngle), 0, 0, 1), 
                                 currentScale,
                                 new AxisAngle4f()
                         ));
@@ -243,11 +240,12 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
             }
         }
 
-        // Наносим 8 урона (4 сердца) и вешаем эффект жесткого капкана
-        victim.damage(8.0); 
-        victim.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 140, 4, false, true));
+        // НАНОСИМ УРОН И НАКЛАДЫВАЕМ ЭФФЕКТЫ СХЛОПЫВАНИЯ
+        victim.damage(8.0); // 8.0 единиц = 4 сердца чистого физического урона
+        victim.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 140, 5, false, true)); // Замедление VI (почти обездвижен)
+        victim.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 40, 0, false, false)); // Кратковременная слепота от шока
 
-        // Полное исчезновение сломанного капкана через 3 секунды
+        // Удаление уничтоженного капкана через 3 секунды
         new BukkitRunnable() {
             @Override
             public void run() {
