@@ -1,0 +1,4 @@
+name: BearTraps
+version: 1.0
+main: ru.beartraps.BearTraps
+api-version: '1.21'
