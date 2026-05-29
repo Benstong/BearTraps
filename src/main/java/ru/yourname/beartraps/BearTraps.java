@@ -19,6 +19,8 @@ import org.bukkit.util.Transformation;
 import org.joml.AxisAngle4f;
 import org.joml.Vector3f;
 
+import java.util.UUID;
+
 public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
 
     private final NamespacedKey TRAP_KEY = new NamespacedKey(this, "is_bear_trap");
@@ -36,6 +38,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         ItemStack item = new ItemStack(Material.CHAIN);
         ItemMeta meta = item.getItemMeta();
         meta.setDisplayName(ChatColor.DARK_GRAY + "Медвежий капкан");
+        meta.setLore(java.util.List.of(ChatColor.GRAY + "Установи на землю, чтобы поймать добычу"));
         meta.getPersistentDataContainer().set(TRAP_KEY, PersistentDataType.BYTE, (byte) 1);
         item.setItemMeta(meta);
 
@@ -48,20 +51,26 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
 
     @EventHandler
     public void onInteract(PlayerInteractEvent event) {
+        // Установка: ПКМ по блоку
         if (event.getAction() == Action.RIGHT_CLICK_BLOCK && event.getItem() != null 
-                && event.getItem().getItemMeta().getPersistentDataContainer().has(TRAP_KEY)) {
+                && event.getItem().getItemMeta().getPersistentDataContainer().has(TRAP_KEY, PersistentDataType.BYTE)) {
             event.setCancelled(true);
-            Location loc = event.getClickedBlock().getLocation().add(0.5, 1.0, 0.5);
+            Location loc = event.getClickedBlock().getRelative(event.getBlockFace()).getLocation().add(0.5, 0, 0.5);
             spawnTrap(loc);
             if (event.getPlayer().getGameMode() != GameMode.CREATIVE) event.getItem().subtract();
+        }
+        
+        // Снятие: ЛКМ по капкану
+        if (event.getAction() == Action.LEFT_CLICK_BLOCK && event.getClickedBlock() != null) {
+            removeTrapsAt(event.getClickedBlock().getLocation().add(0, 1, 0), 1.0);
         }
     }
 
     private void spawnTrap(Location loc) {
         String id = UUID.randomUUID().toString();
-        spawnPart(loc, Material.CHAIN, 0, -0.4f, 1f, 0.5f, 1f, id); // База
-        spawnPart(loc, Material.IRON_NUGGET, -0.5f, -0.2f, 2f, 2f, 2f, id); // Зуб 1
-        spawnPart(loc, Material.IRON_NUGGET, 0.5f, -0.2f, 2f, 2f, 2f, id); // Зуб 2
+        spawnPart(loc, Material.CHAIN, 0, -0.4f, 1f, 0.5f, 1f, id); 
+        spawnPart(loc, Material.IRON_NUGGET, -0.3f, -0.3f, 1.5f, 1.5f, 1.5f, id); 
+        spawnPart(loc, Material.IRON_NUGGET, 0.3f, -0.3f, 1.5f, 1.5f, 1.5f, id);
     }
 
     private void spawnPart(Location loc, Material mat, float x, float y, float sx, float sy, float sz, String id) {
@@ -77,11 +86,12 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
             public void run() {
                 for (World world : Bukkit.getWorlds()) {
                     for (ItemDisplay display : world.getEntitiesByClass(ItemDisplay.class)) {
-                        if (display.getPersistentDataContainer().has(TRAP_ID)) {
+                        if (display.getPersistentDataContainer().has(TRAP_ID, PersistentDataType.STRING)) {
                             Location loc = display.getLocation();
                             for (Entity e : loc.getWorld().getNearbyEntities(loc, 0.7, 0.7, 0.7)) {
                                 if (e instanceof LivingEntity && !(e instanceof ArmorStand)) {
                                     triggerTrap(loc, display.getPersistentDataContainer().get(TRAP_ID, PersistentDataType.STRING));
+                                    break;
                                 }
                             }
                         }
@@ -96,22 +106,33 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         loc.getWorld().spawnParticle(Particle.CRIT, loc, 30);
         loc.getWorld().getNearbyEntities(loc, 1, 1, 1).stream()
                 .filter(e -> e instanceof LivingEntity).forEach(e -> ((LivingEntity) e).damage(8));
-        
-        // Удаление всех частей по ID
+        removeTrapsById(id);
+    }
+
+    private void removeTrapsById(String id) {
+        for (World world : Bukkit.getWorlds()) {
+            world.getEntitiesByClass(ItemDisplay.class).stream()
+                    .filter(d -> id.equals(d.getPersistentDataContainer().get(TRAP_ID, PersistentDataType.STRING)))
+                    .forEach(Entity::remove);
+        }
+    }
+
+    private void removeTrapsAt(Location loc, double radius) {
         loc.getWorld().getEntitiesByClass(ItemDisplay.class).stream()
-                .filter(d -> id.equals(d.getPersistentDataContainer().get(TRAP_ID, PersistentDataType.STRING)))
-                .forEach(Entity::remove);
+                .filter(d -> d.getPersistentDataContainer().has(TRAP_ID, PersistentDataType.STRING) && d.getLocation().distance(loc) <= radius)
+                .forEach(d -> {
+                    d.remove();
+                    d.getWorld().dropItemNaturally(d.getLocation(), new ItemStack(Material.CHAIN));
+                });
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        if (!(sender instanceof Player)) return true;
-        double radius = (args.length > 0) ? Double.parseDouble(args[0]) : 10;
-        Player p = (Player) sender;
-        p.getWorld().getEntitiesByClass(ItemDisplay.class).stream()
-                .filter(d -> d.getPersistentDataContainer().has(TRAP_ID) && d.getLocation().distance(p.getLocation()) <= radius)
-                .forEach(Entity::remove);
-        p.sendMessage("Удалено.");
+        if (sender instanceof Player p) {
+            double radius = (args.length > 0) ? Double.parseDouble(args[0]) : 10;
+            removeTrapsAt(p.getLocation(), radius);
+            p.sendMessage(ChatColor.GREEN + "Капканы очищены!");
+        }
         return true;
     }
 }
