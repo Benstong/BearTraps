@@ -185,7 +185,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                 // ДЕМОНТАЖ (ЛКМ)
                 if (event.getAction() == Action.LEFT_CLICK_BLOCK) {
                     event.setCancelled(true);
-                    removeTrapEntities(display.getWorld(), id);
+                    removeTrapEntities(clickedTrap.getWorld(), id);
                     
                     ItemStack trapItem = new ItemStack(Material.CHAIN);
                     ItemMeta m = trapItem.getItemMeta();
@@ -321,7 +321,8 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                 anchor.getPersistentDataContainer().set(trapStateKey, PersistentDataType.STRING, "armed");
                 loc.getWorld().playSound(loc, Sound.BLOCK_LEVER_CLICK, 0.9f, 0.7f);
                 player.sendMessage(ChatColor.GREEN + "Капкан успешно взведен!");
-            } carbon.runTaskLater(this, 10L);
+            }
+        }.runTaskLater(this, 10L);
     }
 
     private void startDetectionTask() {
