@@ -29,6 +29,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
     private NamespacedKey trapIdKey;
     private NamespacedKey trapPartKey;
     private NamespacedKey trapStateKey;
+    private NamespacedKey trapBaitKey; // Ключ для проверки наличия приманки
 
     @Override
     public void onEnable() {
@@ -36,6 +37,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         trapIdKey = new NamespacedKey(this, "trap_id");
         trapPartKey = new NamespacedKey(this, "trap_part");
         trapStateKey = new NamespacedKey(this, "trap_state");
+        trapBaitKey = new NamespacedKey(this, "trap_has_bait");
 
         getServer().getPluginManager().registerEvents(this, this);
         if (getCommand("cleartraps") != null) {
@@ -44,7 +46,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         
         registerRecipe();
         startDetectionTask();
-        getLogger().info("BearTraps (Приподнятый с точным уроном) запущен!");
+        getLogger().info("BearTraps (Приманка для Зомби) запущен!");
     }
 
     private void registerRecipe() {
@@ -66,26 +68,82 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
     @EventHandler
     public void onInteract(PlayerInteractEvent event) {
         Player player = event.getPlayer();
+        ItemStack handItem = event.getItem();
 
-        // Установка капкана (ПКМ)
-        if (event.getAction() == Action.RIGHT_CLICK_BLOCK && event.getItem() != null && event.getClickedBlock() != null) {
-            ItemMeta meta = event.getItem().getItemMeta();
+        // 1. Установка закрытого капкана (ПКМ)
+        if (event.getAction() == Action.RIGHT_CLICK_BLOCK && handItem != null && event.getClickedBlock() != null) {
+            ItemMeta meta = handItem.getItemMeta();
             if (meta != null && meta.getPersistentDataContainer().has(trapKey, PersistentDataType.BYTE)) {
                 event.setCancelled(true);
                 
-                // ИЗМЕНЕНИЕ: приподняли координату Y с -0.1 до 0.02, чтобы модель лежала на блоке
                 Location spawnLoc = event.getClickedBlock().getRelative(event.getBlockFace()).getLocation().add(0.5, 0.02, 0.5);
-                spawnTrap(spawnLoc);
+                spawnClosedTrap(spawnLoc);
                 
                 if (player.getGameMode() != GameMode.CREATIVE) {
-                    event.getItem().setAmount(event.getItem().getAmount() - 1);
+                    handItem.setAmount(handItem.getAmount() - 1);
                 }
-                player.playSound(spawnLoc, Sound.BLOCK_ANVIL_PLACE, 0.5f, 1.8f);
+                player.playSound(spawnLoc, Sound.BLOCK_ANVIL_PLACE, 0.5f, 1.5f);
+                player.sendMessage(ChatColor.GRAY + "Вы установили капкан. Его нужно взвести (ПКМ пустой рукой).");
                 return;
             }
         }
 
-        // Демонтаж рукой (ЛКМ)
+        // 2. Взаимодействие с установленным капканом (Взвод / Установка приманки)
+        if (event.getAction() == Action.RIGHT_CLICK_BLOCK && event.getClickedBlock() != null) {
+            Location clickLoc = event.getClickedBlock().getLocation().add(0.5, 1.0, 0.5);
+            if (clickLoc.getWorld() != null) {
+                for (Entity entity : clickLoc.getWorld().getNearbyEntities(clickLoc, 1.2, 1.2, 1.2)) {
+                    if (entity instanceof ItemDisplay display && display.getPersistentDataContainer().has(trapIdKey, PersistentDataType.STRING)) {
+                        
+                        String id = display.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING);
+                        ItemDisplay anchor = findAnchor(display.getWorld(), id);
+                        
+                        if (anchor != null) {
+                            String state = anchor.getPersistentDataContainer().get(trapStateKey, PersistentDataType.STRING);
+                            
+                            // Ситуация А: Игрок нажал Shift + ПКМ с Гнилой плотью по ОТКРЫТОМУ (armed) капкану
+                            if ("armed".equals(state) && player.isSneaking() && handItem != null && handItem.getType() == Material.ROTTEN_FLESH) {
+                                event.setCancelled(true);
+                                
+                                // Проверяем, нет ли уже там приманки
+                                if (!anchor.getPersistentDataContainer().has(trapBaitKey, PersistentDataType.BYTE)) {
+                                    anchor.getPersistentDataContainer().set(trapBaitKey, PersistentDataType.BYTE, (byte) 1);
+                                    
+                                    // Спавним гнилую плоть визуально по центру капкана
+                                    ItemDisplay baitDisplay = anchor.getWorld().spawn(anchor.getLocation(), ItemDisplay.class);
+                                    baitDisplay.setItemStack(new ItemStack(Material.ROTTEN_FLESH));
+                                    baitDisplay.getPersistentDataContainer().set(trapIdKey, PersistentDataType.STRING, id);
+                                    baitDisplay.getPersistentDataContainer().set(trapPartKey, PersistentDataType.STRING, "bait");
+                                    baitDisplay.setTransformation(new Transformation(
+                                            new Vector3f(0f, 0.08f, 0f), // Чуть-чуть приподнята в центре
+                                            new AxisAngle4f(0, 0, 0, 1),
+                                            new Vector3f(0.4f, 0.4f, 0.4f), // Маленький кусочек мяса
+                                            new AxisAngle4f()
+                                    ));
+                                    
+                                    if (player.getGameMode() != GameMode.CREATIVE) {
+                                        handItem.setAmount(handItem.getAmount() - 1);
+                                    }
+                                    
+                                    player.playSound(anchor.getLocation(), Sound.ENTITY_PLAYER_BURP, 0.6f, 0.8f);
+                                    player.sendMessage(ChatColor.GOLD + "Вы положили гнилую плоть в капкан. Зомби поблизости учуют запах!");
+                                }
+                                return;
+                            }
+                            
+                            // Ситуация Б: Обычный взвод пустого/захлопнутого капкана (ПКМ без предметов)
+                            if (handItem == null && ("closed".equals(state) || "triggered".equals(state))) {
+                                event.setCancelled(true);
+                                playArmingAnimation(player, anchor);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Демонтаж рукой (ЛКМ)
         if (event.getAction() == Action.LEFT_CLICK_BLOCK && event.getClickedBlock() != null) {
             Location clickLoc = event.getClickedBlock().getLocation().add(0.5, 1.0, 0.5);
             if (clickLoc.getWorld() != null) {
@@ -93,22 +151,19 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                     if (entity instanceof ItemDisplay display) {
                         if (display.getPersistentDataContainer().has(trapIdKey, PersistentDataType.STRING)) {
                             String id = display.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING);
-                            String state = display.getPersistentDataContainer().get(trapStateKey, PersistentDataType.STRING);
                             
                             removeTrapEntities(display.getWorld(), id);
                             
-                            if (player.getGameMode() == GameMode.CREATIVE || !"triggered".equals(state)) {
-                                ItemStack trapItem = new ItemStack(Material.CHAIN);
-                                ItemMeta m = trapItem.getItemMeta();
-                                if (m != null) {
-                                    m.setDisplayName(ChatColor.DARK_GRAY + "Медвежий капкан");
-                                    m.getPersistentDataContainer().set(trapKey, PersistentDataType.BYTE, (byte) 1);
-                                    trapItem.setItemMeta(m);
-                                }
-                                player.getInventory().addItem(trapItem);
+                            ItemStack trapItem = new ItemStack(Material.CHAIN);
+                            ItemMeta m = trapItem.getItemMeta();
+                            if (m != null) {
+                                m.setDisplayName(ChatColor.DARK_GRAY + "Медвежий капкан");
+                                m.getPersistentDataContainer().set(trapKey, PersistentDataType.BYTE, (byte) 1);
+                                trapItem.setItemMeta(m);
                             }
+                            player.getInventory().addItem(trapItem);
                             
-                            player.sendMessage(ChatColor.YELLOW + "Капкан убран.");
+                            player.sendMessage(ChatColor.YELLOW + "Капкан успешно демонтирован.");
                             player.playSound(clickLoc, Sound.BLOCK_CHAIN_BREAK, 0.7f, 1.2f);
                             break;
                         }
@@ -118,15 +173,13 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         }
     }
 
-    private void spawnTrap(Location loc) {
+    private void spawnClosedTrap(Location loc) {
         String id = UUID.randomUUID().toString();
 
-        // 1. КОРПУС ИЗ ЦЕПЕЙ (Рамка основания на земле)
+        // 1. СТАТИЧЕСКОЕ ОСНОВАНИЕ
         float[][] baseOffsets = {
-            {0.0f, 0.01f, -0.3f, 0},
-            {0.0f, 0.01f, 0.3f, 0},
-            {-0.3f, 0.01f, 0.0f, 90},
-            {0.3f, 0.01f, 0.0f, 90}
+            {0.0f, 0.01f, -0.3f, 0}, {0.0f, 0.01f, 0.3f, 0},
+            {-0.3f, 0.01f, 0.0f, 90}, {0.3f, 0.01f, 0.0f, 90}
         };
 
         for (int i = 0; i < baseOffsets.length; i++) {
@@ -134,7 +187,7 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
             basePart.setItemStack(new ItemStack(Material.CHAIN));
             basePart.getPersistentDataContainer().set(trapIdKey, PersistentDataType.STRING, id);
             basePart.getPersistentDataContainer().set(trapPartKey, PersistentDataType.STRING, i == 0 ? "trigger_anchor" : "static_base");
-            if (i == 0) basePart.getPersistentDataContainer().set(trapStateKey, PersistentDataType.STRING, "armed");
+            if (i == 0) basePart.getPersistentDataContainer().set(trapStateKey, PersistentDataType.STRING, "closed");
 
             basePart.setTransformation(new Transformation(
                     new Vector3f(baseOffsets[i][0], baseOffsets[i][1], baseOffsets[i][2]),
@@ -144,19 +197,19 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
             ));
         }
 
-        // 2. ЗУБЬЯ И БОКОВЫЕ ЦЕПИ
+        // 2. ЧЕЛЮСТИ И ЗУБЬЯ
         float[] teethZOffsets = {-0.25f, -0.1f, 0.1f, 0.25f};
 
-        // Левая челюсть и её зубья
-        spawnMovingPart(loc, id, "left", Material.CHAIN, new Vector3f(-0.2f, 0.05f, 0f), -65, new Vector3f(0.8f, 0.15f, 0.8f));
+        spawnMovingPart(loc, id, "left", Material.CHAIN, new Vector3f(-0.04f, 0.18f, 0f), -4, new Vector3f(0.8f, 0.15f, 0.8f));
         for (float zOffset : teethZOffsets) {
-            spawnMovingPart(loc, id, "left", Material.IRON_NUGGET, new Vector3f(-0.25f, 0.07f, zOffset), -65, new Vector3f(0.4f, 0.4f, 0.4f));
+            spawnMovingPart(loc, id, "left", Material.IRON_NUGGET, new Vector3f(-0.04f, 0.20f, zOffset), -4, new Vector3f(0.4f, 0.4f, 0.4f));
         }
 
-        // Правая челюсть и её зубья
-        spawnMovingPart(loc, id, "right", Material.CHAIN, new Vector3f(0.2f, 0.05f, 0f), 65, new Vector3f(0.8f, 0.15f, 0.8f));
+        long activeTrapsCount = loc.getWorld().getEntitiesByClass(ItemDisplay.class).stream()
+                .filter(e -> "trigger_anchor".equals(e.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING))).count();
+        spawnMovingPart(loc, id, "right", Material.CHAIN, new Vector3f(0.04f, 0.18f, 0f), 4, new Vector3f(0.8f, 0.15f, 0.8f));
         for (float zOffset : teethZOffsets) {
-            spawnMovingPart(loc, id, "right", Material.IRON_NUGGET, new Vector3f(0.25f, 0.07f, zOffset), 65, new Vector3f(0.4f, 0.4f, 0.4f));
+            spawnMovingPart(loc, id, "right", Material.IRON_NUGGET, new Vector3f(0.04f, 0.20f, zOffset), 4, new Vector3f(0.4f, 0.4f, 0.4f));
         }
     }
 
@@ -174,10 +227,61 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         ));
     }
 
-    private void startDetectionTask() {
+    private void playArmingAnimation(Player player, ItemDisplay anchor) {
+        Location loc = anchor.getLocation();
+        String id = anchor.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING);
+
+        player.swingMainHand();
+        player.setSneaking(true);
+        loc.getWorld().playSound(loc, Sound.BLOCK_CHAIN_PLACE, 0.8f, 0.8f);
+        loc.getWorld().playSound(loc, Sound.BLOCK_IRON_DOOR_OPEN, 0.5f, 0.5f);
+
+        for (Entity entity : loc.getWorld().getNearbyEntities(loc, 2.0, 2.0, 2.0)) {
+            if (entity instanceof ItemDisplay jaw && id.equals(jaw.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING))) {
+                String side = jaw.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING);
+                
+                if ("left".equals(side) || "right".equals(side)) {
+                    jaw.setInterpolationDuration(10);
+                    jaw.setInterpolationDelay(0);
+                    
+                    Vector3f currentTrans = jaw.getTransformation().getTranslation();
+                    Vector3f currentScale = jaw.getTransformation().getScale();
+                    boolean isNugget = jaw.getItemStack().getType() == Material.IRON_NUGGET;
+
+                    float newX = "left".equals(side) ? (isNugget ? -0.25f : -0.2f) : (isNugget ? 0.25f : 0.2f);
+                    float newAngle = "left".equals(side) ? -65f : 65f;
+                    float newY = isNugget ? 0.07f : 0.05f;
+
+                    jaw.setTransformation(new Transformation(
+                            new Vector3f(newX, newY, currentTrans.z),
+                            new AxisAngle4f((float) Math.toRadians(newAngle), 0, 0, 1),
+                            currentScale,
+                            new AxisAngle4f()
+                    ));
+                }
+            }
+        }
+
         new BukkitRunnable() {
             @Override
             public void run() {
+                if (player.isOnline()) player.setSneaking(false);
+                anchor.getPersistentDataContainer().set(trapStateKey, PersistentDataType.STRING, "armed");
+                loc.getWorld().playSound(loc, Sound.BLOCK_LEVER_CLICK, 0.9f, 0.7f);
+                player.sendMessage(ChatColor.GREEN + "Капкан успешно взведен!");
+            }
+        }.runTaskLater(this, 10L);
+    }
+
+    private void startDetectionTask() {
+        new BukkitRunnable() {
+            int baitTimer = 0;
+
+            @Override
+            public void run() {
+                baitTimer++;
+                boolean runBaitLogic = (baitTimer % 10 == 0); // Каждые 2 секунды (40 тиков) пересчитываем ИИ приманки
+
                 for (World world : Bukkit.getWorlds()) {
                     for (ItemDisplay display : world.getEntitiesByClass(ItemDisplay.class)) {
                         if (display.getPersistentDataContainer().has(trapPartKey, PersistentDataType.STRING)) {
@@ -186,7 +290,22 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
                             
                             if ("trigger_anchor".equals(part) && "armed".equals(state)) {
                                 Location loc = display.getLocation();
-                                // ИЗМЕНЕНИЕ: Увеличили зону детекции по высоте до 0.85, чтобы точно ловить наступающего игрока
+                                
+                                // А) ЛОГИКА ПРИМАНКИ (Привлечение зомби)
+                                if (runBaitLogic && display.getPersistentDataContainer().has(trapBaitKey, PersistentDataType.BYTE)) {
+                                    // Визуальные споры запаха мяса
+                                    loc.getWorld().spawnParticle(Particle.SNEEZE, loc.clone().add(0, 0.1, 0), 3, 0.2, 0.0, 0.2, 0.01);
+                                    
+                                    // Агрим зомби в радиусе 16 блоков
+                                    for (Entity nearby : loc.getWorld().getNearbyEntities(loc, 16.0, 5.0, 16.0)) {
+                                        if (nearby instanceof Zombie zombie) {
+                                            // Если у зомби нет цели или он идет за игроком — переманиваем его на точку капкана
+                                            zombie.getPathfinder().moveTo(loc, 1.2);
+                                        }
+                                    }
+                                }
+
+                                // Б) ОБЫЧНАЯ ДЕТЕКЦИЯ НАСТУПАНИЯ
                                 for (Entity entity : loc.getWorld().getNearbyEntities(loc, 0.5, 0.85, 0.5)) {
                                     if (entity instanceof LivingEntity && !(entity instanceof ArmorStand)) {
                                         if (entity instanceof Player && ((Player) entity).getGameMode() == GameMode.CREATIVE) {
@@ -213,45 +332,54 @@ public class BearTraps extends JavaPlugin implements Listener, CommandExecutor {
         loc.getWorld().playSound(loc, Sound.BLOCK_ANVIL_LAND, 0.9f, 1.8f);
         loc.getWorld().spawnParticle(Particle.CRIT, loc.clone().add(0, 0.2, 0), 20, 0.1, 0.1, 0.1, 0.1);
 
-        // Анимация моментального схлопывания зубьев и цепей в центр
+        // Очищаем приманку из данных и удаляем её 3D модель
+        if (anchor.getPersistentDataContainer().has(trapBaitKey, PersistentDataType.BYTE)) {
+            anchor.getPersistentDataContainer().remove(trapBaitKey);
+        }
+
+        // Анимация моментального схлопывания деталей
         for (Entity entity : loc.getWorld().getNearbyEntities(loc, 2.0, 2.0, 2.0)) {
-            if (entity instanceof ItemDisplay jaw) {
-                if (id.equals(jaw.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING))) {
-                    String side = jaw.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING);
+            if (entity instanceof ItemDisplay part && id.equals(part.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING))) {
+                String pName = part.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING);
+                
+                if ("left".equals(pName) || "right".equals(pName)) {
+                    part.setInterpolationDuration(3);
+                    part.setInterpolationDelay(0);
                     
-                    if ("left".equals(side) || "right".equals(side)) {
-                        jaw.setInterpolationDuration(3);
-                        jaw.setInterpolationDelay(0);
-                        
-                        Vector3f currentTrans = jaw.getTransformation().getTranslation();
-                        Vector3f currentScale = jaw.getTransformation().getScale();
-                        
-                        float newX = "left".equals(side) ? -0.04f : 0.04f;
-                        float newAngle = "left".equals(side) ? -4f : 4f;
-                        
-                        jaw.setTransformation(new Transformation(
-                                new Vector3f(newX, 0.18f, currentTrans.z), 
-                                new AxisAngle4f((float) Math.toRadians(newAngle), 0, 0, 1), 
-                                currentScale,
-                                new AxisAngle4f()
-                        ));
-                    }
+                    Vector3f currentTrans = part.getTransformation().getTranslation();
+                    Vector3f currentScale = part.getTransformation().getScale();
+                    
+                    float newX = "left".equals(pName) ? -0.04f : 0.04f;
+                    float newAngle = "left".equals(pName) ? -4f : 4f;
+                    
+                    part.setTransformation(new Transformation(
+                            new Vector3f(newX, 0.18f, currentTrans.z), 
+                            new AxisAngle4f((float) Math.toRadians(newAngle), 0, 0, 1), 
+                            currentScale,
+                            new AxisAngle4f()
+                    ));
+                } else if ("bait".equals(pName)) {
+                    // Кусочек плоти уничтожается ("съедается" капканом)
+                    part.remove();
                 }
             }
         }
 
-        // НАНОСИМ УРОН И НАКЛАДЫВАЕМ ЭФФЕКТЫ СХЛОПЫВАНИЯ
-        victim.damage(8.0); // 8.0 единиц = 4 сердца чистого физического урона
-        victim.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 140, 5, false, true)); // Замедление VI (почти обездвижен)
-        victim.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 40, 0, false, false)); // Кратковременная слепота от шока
+        // Нанесение урона
+        victim.damage(8.0); 
+        victim.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 140, 5, false, true));
+        victim.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 40, 0, false, false));
+    }
 
-        // Удаление уничтоженного капкана через 3 секунды
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                removeTrapEntities(anchor.getWorld(), id);
+    private ItemDisplay findAnchor(World world, String id) {
+        for (ItemDisplay display : world.getEntitiesByClass(ItemDisplay.class)) {
+            if (id.equals(display.getPersistentDataContainer().get(trapIdKey, PersistentDataType.STRING))) {
+                if ("trigger_anchor".equals(display.getPersistentDataContainer().get(trapPartKey, PersistentDataType.STRING))) {
+                    return display;
+                }
             }
-        }.runTaskLater(this, 60L);
+        }
+        return null;
     }
 
     private void removeTrapEntities(World world, String id) {
