@@ -45,13 +45,21 @@ public class BearTraps extends JavaPlugin implements Listener {
 
     @EventHandler
     public void onInteract(PlayerInteractEvent event) {
+        // Установка капкана (ПКМ)
         if (event.getAction() == Action.RIGHT_CLICK_BLOCK && event.getItem() != null 
                 && event.getItem().getItemMeta().getPersistentDataContainer().has(TRAP_KEY, PersistentDataType.BYTE)) {
             event.setCancelled(true);
             Location loc = event.getClickedBlock().getRelative(event.getBlockFace()).getLocation().add(0.5, 0, 0.5);
             spawnTrap(loc);
-            if (event.getPlayer().getGameMode() != GameMode.CREATIVE) event.getItem().subtract();
+            
+            // Исправленное уменьшение количества предмета
+            if (event.getPlayer().getGameMode() != GameMode.CREATIVE) {
+                ItemStack item = event.getItem();
+                item.setAmount(item.getAmount() - 1);
+            }
         }
+        
+        // Снятие капкана (ЛКМ)
         if (event.getAction() == Action.LEFT_CLICK_BLOCK && event.getClickedBlock() != null) {
             removeTrapsAt(event.getClickedBlock().getLocation().add(0, 1, 0), 1.0);
         }
